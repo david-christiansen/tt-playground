@@ -1,0 +1,6 @@
+* A type theory playground
+
+This is a place for experimental implementations of type theories that
+may well be busted, as well as a place for me to learn Racket.
+
+No guarantees about any of it!
