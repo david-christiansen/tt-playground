@@ -37,8 +37,13 @@
 (define-type Well-Formed-Lambda
   (List 'λ (Listof Symbol) Term))
 
+(define-predicate well-formed-lambda? Well-Formed-Lambda)
+
+(define-type (Typed-Binding-Form sym)
+  (List sym (Listof (List Symbol Term)) Term))
+
 (define-type Well-Formed-Pi
-  (List 'Π (Listof (List Symbol Term)) Term))
+  (Typed-Binding-Form 'Π))
 
 (define-predicate well-formed-pi? Well-Formed-Pi)
 
@@ -49,6 +54,19 @@
 (: pi-get-body (-> Well-Formed-Pi Term))
 (define (pi-get-body term)
   (caddr term))
+
+;;; Intersections start with \bigcap, not \cap
+(define-type Well-Formed-Intersection
+  (Typed-Binding-Form '⋂))
+
+(define-predicate well-formed-intersection? Well-Formed-Intersection)
+
+(: intersection-get-arguments (-> Well-Formed-Intersection
+                                  (Listof (List Symbol Term))))
+(define (intersection-get-arguments term) (cadr term))
+
+(: intersection-get-body (-> Well-Formed-Intersection Term))
+(define (intersection-get-body term) (caddr term))
 
 
 (: binding-list? (Any -> Boolean : (Listof Symbol)))
@@ -214,6 +232,183 @@
              new-var
              x))]))
 
+;;; Construct a new symbol based on an existing one that resembles the
+;;; original, for use when uniquifying binder names
+(: next-symbol (-> Symbol Symbol))
+(define (next-symbol symbol)
+  (: symbol-number Regexp)
+  (define symbol-number #rx"^(.*[^0-9])([0-9]*)$")
+
+  (let ((name-and-number
+         (regexp-match symbol-number
+                       (symbol->string symbol))))
+    (match name-and-number
+      [#f (string->symbol (string-append (symbol->string symbol)
+                                         "1"))]
+      [(list _ name num) #:when (and name num)
+       (let ((the-number (string->number num)))
+         (string->symbol
+          (string-append name
+                         (if the-number
+                             (number->string (+ the-number 1))
+                             "1"))))])))
+
+(module+ test
+  (check-equal? (next-symbol 'x) 'x1)
+  (check-equal? (next-symbol 'x23) 'x24)
+  (check-equal? (next-symbol '|123|)
+                '|1231|)
+  (check-equal? (next-symbol 'lkj1lk3jl1k2j3l1k2j3)
+                'lkj1lk3jl1k2j3l1k2j4))
+
+(: next-available-symbol (-> (Setof Symbol) Symbol Symbol))
+(define (next-available-symbol taken start)
+  (if (set-member? taken start)
+      (next-available-symbol taken (next-symbol start))
+      start))
+
+(module+ test
+  (check-equal? (next-available-symbol (set 'x 'y) 'z) 'z)
+  (check-equal? (next-available-symbol (set 'x 'x1 'x2) 'x) 'x3))
+
+(: rename-binders (-> (Setof Symbol)
+                      (Listof Symbol)
+                      (Pair (Listof Symbol)
+                            (HashTable Symbol Symbol))))
+(define (rename-binders taken input)
+  (: helper (-> (Setof Symbol) (Listof Symbol)
+                (Listof Symbol) (HashTable Symbol Symbol)
+                (Pair (Listof Symbol)
+                      (HashTable Symbol Symbol))))
+  (define (helper all-taken remaining output renames)
+    (if (null? remaining)
+        (cons (reverse output) renames)
+        (let* ((old-name (car remaining))
+               (new-name
+                (next-available-symbol all-taken
+                                       old-name)))
+          (helper (set-add all-taken new-name)
+                  (cdr remaining)
+                  (cons new-name output)
+                  (hash-set renames old-name new-name)))))
+
+  (helper taken input empty (hash)))
+
+(: rename-typed-binders (-> (Setof Symbol)
+                            (Listof (List Symbol Term))
+                            (Pair (Listof (List Symbol Term))
+                                  (HashTable Symbol Symbol))))
+(define (rename-typed-binders taken input)
+  (let* ((names (map (inst car Symbol Term) input))
+         (types (map (inst cadr Symbol Term Null) input))
+         (renames (rename-binders taken names)))
+    (cons (map (lambda ([name : Symbol] [type : Term])
+                 (list name type))
+               (car renames)
+               types)
+          (cdr renames))))
+
+;;; Substitution for pi and intersection
+(: substitute-typed-binder
+   (All (S)
+        (-> S
+            Term
+            Symbol
+            (Typed-Binding-Form S)
+            (Typed-Binding-Form S))))
+(define (substitute-typed-binder head-symbol new-term name in-term)
+  (let ((arguments (cadr in-term)))
+    (if (memf (lambda ([b : (List Symbol Term)])
+                (equal? (car b) name))
+              arguments)
+        ;; The variable is bound here -
+        ;; substitute only in type annots
+        (list head-symbol
+              (map (λ ([binding : (List Symbol Term)])
+                     (list (car binding)
+                           (substitute new-term name (cadr binding))))
+                   arguments)
+              (caddr in-term))
+        ;; Descend into body
+        (let ((body (caddr in-term))
+              (renamed (rename-typed-binders
+                        (free-variables new-term)
+                        arguments)))
+          (list head-symbol
+                (map (λ ([binding : (List Symbol Term)])
+                       (list (car binding)
+                             (substitute new-term
+                                         name
+                                         (cadr binding))))
+                     (car renamed))
+                (substitute new-term
+                            name
+                            (rename-free-variables
+                             (cdr renamed)
+                             body)))))))
+
+(: substitute (-> Term Symbol Term Term))
+(define (substitute new-term name in-term)
+  (cond [(symbol? in-term)
+         (if (equal? in-term name)
+             new-term
+             in-term)]
+        [(integer? in-term) in-term]
+        [(pair? in-term)
+         (let ((head (car in-term)))
+           (cond [(equal? head 'λ)
+                  (if (well-formed-lambda? in-term)
+                      (let ((λ-arguments (cadr in-term)))
+                        (if (member name λ-arguments)
+                            in-term
+                            (let ((λ-body (caddr in-term))
+                                  (renamed (rename-binders
+                                            (free-variables new-term)
+                                            λ-arguments)))
+                              `(λ ,(car renamed)
+                                 ,(substitute new-term
+                                              name
+                                              (rename-free-variables
+                                               (cdr renamed)
+                                               λ-body))))))
+                      (error "Malformed term: bad lambda" in-term))]
+                 [(or (equal? head 'Π)
+                      (equal? head '⋂))
+                  (cond [(well-formed-pi? in-term)
+                         (substitute-typed-binder
+                          'Π new-term name in-term)]
+                        [(well-formed-intersection? in-term)
+                         (substitute-typed-binder
+                          '⋂ new-term name in-term)]
+                        [#t (error "Malformed term" in-term)])]
+                 [#t (map (lambda ([subterm : Term])
+                            (substitute new-term name subterm))
+                          in-term)]))]
+        [#t (error "Malformed term" in-term)]))
+
+(module+ test
+  (check-equal? (substitute 42 'x '(+ x 12)) '(+ 42 12))
+  (check-equal? (substitute 'x 'y -23) -23)
+  (check-equal? (substitute 42 'x '(λ (y) (+ y x)))
+                '(λ (y) (+ y 42)))
+  ;; Substitution stops when it hits shadowing
+  (check-equal? (substitute 3 'x '(λ (x y z) x))
+                '(λ (x y z) x))
+  (check-equal? (substitute 3 'x '(Π ((x Integer)) x))
+                '(Π ((x Integer)) x))
+  (check-equal? (substitute 'Integer 'x '(Π ((x Integer) (y x))
+                                            (= x y Integer)))
+                '(Π ((x Integer) (y Integer))
+                    (= x y Integer)))
+
+  ;; Check capture-avoidance
+  (check-equal? (substitute 'y 'x '(λ (y) (+ y x)))
+                '(λ (y1) (+ y1 y)))
+  (check-equal? (substitute 'y 'x '(Π ((y Integer)) x))
+                '(Π ((y1 Integer)) y))
+  (check-equal? (substitute 'y 'x '(⋂ ((y Integer)) x))
+                '(⋂ ((y1 Integer)) y)))
+
 
 
 ;; Hypothetical judgments
@@ -324,6 +519,14 @@
                 (cant-refine j)))))))
 
 
+;;;; This theory uses the empty list as the canonical unit value. This
+;;;; breaks somewhat with the Lisp tradition - ah well, it makes sense
+;;;; because it can always be trivially constructed.
+
+;;;; TODO - rules for Ax a la Nuprl
+
+
+
 ;;;; Function rules
 (: pi-f Rule)
 (define (pi-f j)
@@ -405,15 +608,15 @@
 
 ;;;; Integer rules
 
-(: int-f Rule)
-(define (int-f j)
+(: integer-formation Rule)
+(define (integer-formation j)
   (match j
     [(⊢ _ (is-type 'Integer))
      (refine-done 'Integer)]
     [other (cant-refine other)]))
 
-(: int-intro Rule)
-(define (int-intro j)
+(: integer-intro Rule)
+(define (integer-intro j)
   (match j
     [(⊢ _ (has-type i 'Integer))
      #:when (integer? i)
@@ -427,8 +630,8 @@
      refine-done-ax]
     [other (cant-refine other)]))
 
-(: int-intro-op Rule)
-(define (int-intro-op j)
+(: integer-aritmetic-op Rule)
+(define (integer-aritmetic-op j)
   (define arith-ops '(+ *))
   (define arith-ops-need-arg '(- /))
   (match j
@@ -447,7 +650,56 @@
     [other (cant-refine other)]))
 
 
+;;;; Rules for intersections
 
+;;; An intersection is a type if all quantifiers are types and the
+;;; body is a type given the extended context
+(: intersection-formation Rule)
+(define (intersection-formation j)
+  (match j
+    [(⊢ Γ (is-type term))
+     #:when (well-formed-intersection? term)
+     (let ((arguments (intersection-get-arguments term))
+           (body (intersection-get-body term)))
+       (refinement
+        (append
+         ;; First the quantified types need to actually be types
+         (map (λ ([argument-binder : (List Symbol Term)])
+                (⊢ Γ (is-type (cadr argument-binder))))
+              arguments)
+
+         ;; Also, the body needs to be a type given the bindings
+         (list (⊢ (append (reverse arguments) Γ)
+                  (is-type body))))
+        (λ (extracts) `(⋂ ,arguments ,(last extracts)))
+        ))]
+    [other (cant-refine other)]))
+
+;;; A term is an element of an intersection if it is a member of the
+;;; body for any instantiation of the arguments.
+(: intersection-membership Rule)
+(define (intersection-membership j)
+  (match j
+    [(⊢ Γ (has-type term type))
+     #:when (well-formed-intersection? type)
+     (let ((⋂-arguments (intersection-get-arguments type))
+           (⋂-body (intersection-get-body type)))
+       (refinement
+        ;; The term has the body type under the intersection
+        ;; assumptions and the intersection assumptions are types
+        (cons (⊢ (append (reverse ⋂-arguments) Γ)
+                 (has-type term ⋂-body))
+              (map (lambda ([binding : (List Symbol Term)])
+                     (⊢ Γ (is-type (cadr binding))))
+                   ⋂-arguments))
+        ;; The extract is the term itself
+        car))]
+    [other (cant-refine other)]))
+
+
+
+
+;;;; Infrastructure for proofs
 
 (define-type Proof-Step (U proof-goal proof-step))
 (struct proof-goal ([goal : ⊢]) #:transparent)
@@ -516,21 +768,21 @@
 (module+ test
   (define proof-1
     (proof-step (⊢ empty (has-type '(+ 1 2 3) 'Integer))
-                int-intro-op
+                integer-aritmetic-op
                 (list (proof-step (⊢ empty (has-type 1 'Integer))
-                                  int-intro
+                                  integer-intro
                                   empty)
                       (proof-step (⊢ empty (has-type 2 'Integer))
-                                  int-intro
+                                  integer-intro
                                   empty)
                       (proof-step (⊢ empty (has-type 3 'Integer))
-                                  int-intro
+                                  integer-intro
                                   empty))))
   (check-equal? (check-proof proof-1) (proof-done '(+ 1 2 3)))
 
   (define proof-2
     (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
-                int-intro-op
+                integer-aritmetic-op
                 (list (proof-step (⊢ (list '(x Integer))
                                      (has-type 'x 'Integer))
                                   (hypothesis 0)
@@ -563,4 +815,5 @@
 ;; Local Variables:
 ;; whitespace-line-column: 70
 ;; eval: (whitespace-mode 1)
+;; eval: (set-input-method "TeX")
 ;; End:
