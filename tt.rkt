@@ -9,13 +9,9 @@
 (module+ test (require typed/rackunit))
 
 
-;;;; Helpers - TODO: figure out racket idiom
+;;;; Helpers
 (: zip (All (a b) (-> (Listof a) (Listof b) (Listof (Pair a b)))))
-(define (zip l1 l2)
-  (match* (l1 l2)
-    [((cons x xs) (cons y ys))
-     (cons (cons x y) (zip xs ys))]
-    [(_ _) empty]))
+(define (zip l1 l2) (zip-with #{cons @ a b} l1 l2))
 
 (: zip-with (All (a b c)
                  (-> (-> a b c)
@@ -26,7 +22,8 @@
   (match* (l1 l2)
     [((cons x xs) (cons y ys))
      (cons (f x y) (zip-with f xs ys))]
-    [(_ _) empty]))
+    [(empty empty) (list)]
+    [(_ _) (error "Mismatched list lengths")]))
 
 
 
@@ -411,11 +408,32 @@
 
 
 
+;;; Contexts are represented in reverse order because hypotheses are
+;;; counted from the most-recent first, to make proof steps rely less
+;;; on global knowledge
+(define-type Context (Listof (List Symbol Term)))
+
 ;; Hypothetical judgments
 (struct ⊢
-  ([context : (Listof (List Symbol Term))]
+  ([context : Context]
    [judgment : Judgment])
   #:transparent)
+
+(: split-context (-> Context
+                     Natural (List Context
+                                   (List Symbol Term)
+                                   Context)))
+(define (split-context context which-hypothesis)
+  (if (>= which-hypothesis (length context))
+      (error "Hypothesis out of range")
+      (let*-values
+          (((Δ rest)
+            (split-at context which-hypothesis))
+           ((this-hypothesis)
+            (car rest))
+           ((Γ)
+            (cdr rest)))
+        (list Δ this-hypothesis Γ))))
 
 ;;;; Here we have the traditional four judgments of Martin-Löf type
 ;;;; theory, although in this style of type theory, they can all be
@@ -452,8 +470,8 @@
 (: simplify-judgment (-> Judgment Judgment))
 (define (simplify-judgment j)
   (match j
-    [(is-type ty) (=-in ty ty '(Univ i))]
-    [(=-type t1 t2) (=-in t1 t2 '(Univ i))]
+    [(is-type ty) (=-in ty ty 'Type)]
+    [(=-type t1 t2) (=-in t1 t2 'Type)]
     [(has-type tm ty) (=-in tm tm ty)]
     [(=-in tm1 tm2 ty) (=-in tm1 tm2 ty)]))
 
@@ -499,6 +517,18 @@
 
 (define-syntax-rule (rule-match j (cases ...))
   (match j (cases ... [other (cant-refine other)])))
+
+
+;;;; Temporary bogus rules until universe levels are instituted
+(: type-in-type Rule)
+(define (type-in-type j)
+  (match j
+    [(⊢ context j)
+     #:when (judgment-equivalent? (map #{car @ Symbol Term} context)
+                                  j
+                                  (is-type 'Type))
+     refine-done-ax]
+    [other (cant-refine other)]))
 
 
 ;;;; Structural rules
@@ -553,12 +583,45 @@
      ]
     [other (cant-refine other)]))
 
+(: lambda-intro Rule)
+(define (lambda-intro j)
+  (match j
+    [(⊢ Γ (has-type term type))
+     #:when (and (well-formed-lambda? term)
+                 (well-formed-pi? type)
+                 (= (length (cadr term))
+                    (length (cadr type))))
+     (refinement
+      (cons
+       (⊢ (append (reverse (for/list : Context
+                                     ([x : Symbol
+                                         (cadr term)]
+                                      [typed-binder : (List Symbol Term)
+                                                    (cadr type)])
+                             (list x (cadr typed-binder))))
+                  Γ)
+          (has-type (caddr term)
+                    (rename-free-variables
+                     (for/fold : (HashTable Symbol Symbol)
+                               ([rename (#{hash @ Symbol Symbol})])
+                               ([x : Symbol
+                                   (cadr term)]
+                                [typed-binder : (List Symbol Term)
+                                              (cadr type)])
+                       (hash-set rename x (car typed-binder)))
+                     (caddr type))))
+       (map (lambda ([typed-binder : (List Symbol Term)])
+              (⊢ Γ (is-type (cadr typed-binder))))
+            (cadr type)))
+      (lambda (extracts) `(λ ,(cadr term) ,(car extracts))))]
+    [other (cant-refine other)]))
+
 (: pi-type-equality (-> (Listof Symbol) Rule))
 (define (pi-type-equality argument-names)
   ;; The empty rename set
   (: no-renames (HashTable Symbol Symbol))
   (define no-renames (hash))
-  
+
   (lambda (j)
     (match j
       [(⊢ Γ (=-type left right))
@@ -696,7 +759,63 @@
         car))]
     [other (cant-refine other)]))
 
-
+;;; Intersections in the context can be instantiated freely with
+;;; well-typed values for the arguments.
+(: intersection-elimination (-> Natural (Listof Term)
+                                Symbol Symbol
+                                Rule))
+(define (intersection-elimination which-hypothesis
+                                  instantiations
+                                  new-hypothesis
+                                  equality-hypothesis)
+  (lambda (hypothetical)
+    (match hypothetical
+      [(⊢ context judgment)
+       #:when (< which-hypothesis (length context))
+       (match-let (((list Δ (list x type) Γ)
+                    (split-context context which-hypothesis)))
+         (match type
+           [(list '⋂ arguments body)
+            #:when (typed-binding-list? arguments)
+            (refinement
+             (append
+              ;; Each instantiation is well-typed
+              (zip-with (lambda ([term : Term]
+                                 [argument : (List Symbol Term)])
+                          (⊢ context (has-type term (cadr argument))))
+                        instantiations
+                        arguments)
+              ;; The original goal is provable
+              (list
+               (let ((new-type (for/fold : Term
+                                         ([result : Term
+                                                  body])
+                                         ([argument : (List Symbol Term)
+                                                    arguments]
+                                          [new-term : Term
+                                                    instantiations])
+                                 (substitute new-term
+                                             (car argument)
+                                             result))))
+                 (⊢ (append Δ
+                            (list
+                             (list equality-hypothesis
+                                   `(= ,new-hypothesis
+                                       ,x
+                                       ,new-type))
+                             (list new-hypothesis
+                                   new-type)
+                             (list x type)
+                               )
+                              Γ)
+                      judgment))))
+               (lambda (extracts)
+                 (let ((term (last extracts)))
+                 ;;; TODO: understand why this is what it is in the
+                 ;;; Nuprl manual
+                   (substitute '() new-hypothesis term))))]
+             [other (cant-refine hypothetical)]))]
+        [other (cant-refine other)])))
 
 
 ;;;; Infrastructure for proofs
@@ -771,46 +890,75 @@
                 integer-aritmetic-op
                 (list (proof-step (⊢ empty (has-type 1 'Integer))
                                   integer-intro
-                                  empty)
-                      (proof-step (⊢ empty (has-type 2 'Integer))
-                                  integer-intro
-                                  empty)
-                      (proof-step (⊢ empty (has-type 3 'Integer))
-                                  integer-intro
-                                  empty))))
-  (check-equal? (check-proof proof-1) (proof-done '(+ 1 2 3)))
+                                    empty)
+                        (proof-step (⊢ empty (has-type 2 'Integer))
+                                    integer-intro
+                                    empty)
+                        (proof-step (⊢ empty (has-type 3 'Integer))
+                                    integer-intro
+                                    empty))))
+    (check-equal? (check-proof proof-1) (proof-done '(+ 1 2 3)))
 
-  (define proof-2
-    (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
-                integer-aritmetic-op
-                (list (proof-step (⊢ (list '(x Integer))
-                                     (has-type 'x 'Integer))
-                                  (hypothesis 0)
-                                  empty)
-                      (proof-goal (⊢ (list '(x Integer))
-                                     (has-type 1 'Integer))))))
-  (check-equal? (check-proof proof-2)
-                (proof-incomplete (list (⊢ (list '(x Integer))
-                                           (has-type 1 'Integer)))))
-  (define proof-3
-    (proof-step (⊢ empty
-                   (=-type '(Π ([x Integer] [y Integer]) Integer)
-                           '(Π ([y Integer] [x Integer]) Integer)))
-                (pi-type-equality '(n m))
-                (list (proof-step (⊢ empty
-                                     (=-type 'Integer 'Integer))
-                                  int-type-eq
-                                  empty)
-                      (proof-goal (⊢ empty
-                                     (=-type 'Integer 'Integer)))
-                      (proof-step (⊢ '([m Integer] [n Integer])
-                                     (=-type 'Integer 'Integer))
-                                  int-type-eq
-                                  empty))))
+    (define proof-2
+      (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
+                  integer-aritmetic-op
+                  (list (proof-step (⊢ (list '(x Integer))
+                                       (has-type 'x 'Integer))
+                                    (hypothesis 0)
+                                    empty)
+                        (proof-goal (⊢ (list '(x Integer))
+                                       (has-type 1 'Integer))))))
+    (check-equal? (check-proof proof-2)
+                  (proof-incomplete (list (⊢ (list '(x Integer))
+                                             (has-type 1 'Integer)))))
+    (define proof-3
+      (proof-step (⊢ empty
+                     (=-type '(Π ([x Integer] [y Integer]) Integer)
+                             '(Π ([y Integer] [x Integer]) Integer)))
+                  (pi-type-equality '(n m))
+                  (list (proof-step (⊢ empty
+                                       (=-type 'Integer 'Integer))
+                                    int-type-eq
+                                    empty)
+                        (proof-goal (⊢ empty
+                                       (=-type 'Integer 'Integer)))
+                        (proof-step (⊢ '([m Integer] [n Integer])
+                                       (=-type 'Integer 'Integer))
+                                    int-type-eq
+                                    empty))))
 
-  (check-equal? (check-proof proof-3)
-                (proof-incomplete
-                 (list (⊢ '() (=-type 'Integer 'Integer))))))
+    (check-equal? (check-proof proof-3)
+                  (proof-incomplete
+                   (list (⊢ '() (=-type 'Integer 'Integer)))))
+
+    (define proof-4
+      (proof-step (⊢ empty
+                     (has-type '(λ (x) x)
+                               '(⋂ ((t Type))
+                                   (Π ((y t))
+                                      t))))
+                  intersection-membership
+                  (list
+                   (proof-step (⊢ '((t Type))
+                                  (has-type '(λ (x) x) '(Π ((y t)) t)))
+                               lambda-intro
+                               (list (proof-step
+                                      (⊢ '((x t) (t Type))
+                                         (has-type 'x 't))
+                                      (hypothesis 0)
+                                      empty)
+                                     (proof-step
+                                      (⊢ '((t Type))
+                                         (is-type 't))
+                                      (hypothesis 0)
+                                      empty)))
+                   (proof-step (⊢ '() (is-type 'Type))
+                               type-in-type
+                               empty))
+                  ))
+  (check-equal? (check-proof proof-4)
+                (proof-done '(λ (x) x))))
+
 
 ;; Local Variables:
 ;; whitespace-line-column: 70
