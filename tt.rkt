@@ -4,6 +4,8 @@
 ;; NuPRL-inspired system on top of it.
 ;; No guarantees are made as to the goodness of it.
 
+(provide (all-defined-out))
+
 (require racket/set)
 
 (module+ test (require typed/rackunit))
@@ -438,6 +440,27 @@
       [(_ left right)
        #'(list '=-in left right 'Type)])))
 
+(define-match-expander =-in
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ left right type)
+       #'(list '=-in left right type)]))
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ left right type)
+       #'(list '=-in left right type)])))
+
+;;;; Pattern synonym for the is-value type
+
+(define-match-expander is-value
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ term type)
+       #'(list 'is-value term type)]))
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ term type)
+       #'(list 'is-value term type)])))
 
 
 ;;;; Contexts and hypothetical judgments
@@ -455,9 +478,10 @@
   #:transparent)
 
 (: split-context (-> Context
-                     Natural (List Context
-                                   (List Symbol Term)
-                                   Context)))
+                     Natural
+                     (List Context
+                           (List Symbol Term)
+                           Context)))
 (define (split-context context which-hypothesis)
   (if (>= which-hypothesis (length context))
       (error "Hypothesis out of range")
@@ -546,6 +570,45 @@
           (refine-done x)
           (cant-refine j)))))
 
+
+
+
+;;;; The Equality Type
+
+(: equality-formation (-> Term Rule))
+(define (equality-formation type)
+  (refinement-rule
+   [(⊢ Γ 'Type)
+    (refinement (list (⊢ Γ (is-type type))
+                      (⊢ Γ type)
+                      (⊢ Γ type))
+                (lambda (extracts)
+                  (=-in
+                   (second extracts)
+                   (third extracts)
+                   (first extracts))))]))
+
+;; TODO: consider an explicit representation of one-hole contexts
+;; rather than using a free variable in a term as here. This might be
+;; nice for doing computation rules as well.
+(: substitute-using (-> Term Symbol Term Rule))
+(define (substitute-using equality x context)
+  (match equality
+    [(=-in left right type)
+     (refinement-rule
+      [(⊢ Γ term)
+       #:when (α-equiv? (map (lambda ([b : (List Symbol Term)])
+                               (cons (car b) (car b)))
+                             Γ)
+                        term
+                        (substitute left x context))
+       (refinement
+        (list (⊢ Γ (=-in left right type))
+              (⊢ Γ (substitute right x context))
+              (⊢ (cons (list x type) Γ) (is-type context)))
+        second)])]
+    [_ cant-refine]))
+
 (: hypothesis-equality (-> Natural Rule))
 (define (hypothesis-equality which-hypothesis)
   (lambda (j)
@@ -560,9 +623,6 @@
                             hypothesis-type))
              (cant-refine j))
             (else refine-done-ax)))))
-
-
-;;;; The Equality Type
 
 
 
@@ -639,6 +699,7 @@
             (lambda (extracts) `(λ ,names ,(car extracts))))))]
     [other (cant-refine other)]))
 
+
 (: pi-type-equality (-> (Listof Symbol) Rule))
 (define ((pi-type-equality argument-names) j)
   ;; The empty rename set
@@ -693,12 +754,15 @@
 
 ;;;; Integer rules
 
-(: integer-formation Rule)
 (define-refinement-rule integer-formation
   [(⊢ _ (is-type 'Integer))
    (refine-done 'Integer)])
 
-(: integer-constant-equality Rule)
+(define-refinement-rule integer-constant-value
+  [(⊢ _ (is-value i 'Integer))
+   #:when (integer? i)
+   refine-done-ax])
+
 (define-refinement-rule integer-constant-equality
   [(⊢ _ (has-type i 'Integer))
    #:when (integer? i)
@@ -708,8 +772,8 @@
   [(⊢ _ (=-type 'Integer 'Integer))
    refine-done-ax])
 
-(: integer-aritmetic-op-equality Rule)
-(define (integer-aritmetic-op-equality j)
+(: integer-arithmetic-op-equality Rule)
+(define (integer-arithmetic-op-equality j)
   ;; These arithmetic operators don't necessarily need an argument
   (define arith-ops '(+ *))
   ;; These operators need at least one argument
@@ -897,7 +961,7 @@
 (module+ test
   (define proof-1
     (proof-step (⊢ empty (has-type '(+ 1 2 3) 'Integer))
-                integer-aritmetic-op-equality
+                integer-arithmetic-op-equality
                 (list (proof-step (⊢ empty (has-type 1 'Integer))
                                   integer-constant-equality
                                     empty)
@@ -911,7 +975,7 @@
 
     (define proof-2
       (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
-                  integer-aritmetic-op-equality
+                  integer-arithmetic-op-equality
                   (list (proof-step (⊢ (list '(x Integer))
                                        (has-type 'x 'Integer))
                                     (hypothesis-equality 0)
