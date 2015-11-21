@@ -116,7 +116,7 @@
 (: α-equiv? (-> (Listof (Pair Symbol Symbol)) Term Term Boolean))
 (define (α-equiv? context left right)
   (match* (left right)
-    [(`(λ ,args1 ,body1) `(λ ,args2 ,body2))
+    [((list 'λ args1 body1) (list 'λ args2 body2))
      (if (and (binding-list? args1)
               (binding-list? args2))
          (and (= (length args1) (length args2))
@@ -128,7 +128,7 @@
                         body2))
          (error "Malformed term"))]
 
-    [(`(Π ,args1 ,body1) `(Π ,args2 ,body2))
+    [((list 'Π args1 body1) (list 'Π args2 body2))
      (: all (-> (Listof Any) Any))
      (define (all bools)
        (if (null? bools) #t (and (car bools) (all (cdr bools)))))
@@ -407,16 +407,51 @@
                 '(⋂ ((y1 Integer)) y)))
 
 
+;;;; Abbreviations for the full equality type
+(define-match-expander is-type
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ term)
+       #'(list '=-in term term 'Type)]))
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ term)
+       #'(list '=-in term term 'Type)])))
+
+(define-match-expander has-type
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ term type)
+       #'(list '=-in term term type)]))
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ term type)
+       #'(list '=-in term term type)])))
+
+(define-match-expander =-type
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ left right)
+       #'(list '=-in left right 'Type)]))
+  (lambda (stx)
+    (syntax-case stx ()
+      [(_ left right)
+       #'(list '=-in left right 'Type)])))
+
+
+
+;;;; Contexts and hypothetical judgments
 
 ;;; Contexts are represented in reverse order because hypotheses are
 ;;; counted from the most-recent first, to make proof steps rely less
 ;;; on global knowledge
 (define-type Context (Listof (List Symbol Term)))
 
-;; Hypothetical judgments
+;; Hypothetical judgments. The extracted term is represented
+;; elsewhere.
 (struct ⊢
   ([context : Context]
-   [judgment : Judgment])
+   [goal : Term])
   #:transparent)
 
 (: split-context (-> Context
@@ -435,55 +470,7 @@
             (cdr rest)))
         (list Δ this-hypothesis Γ))))
 
-;;;; Here we have the traditional four judgments of Martin-Löf type
-;;;; theory, although in this style of type theory, they can all be
-;;;; reduced to the equality judgment. That's done by
-;;;; `simplify-judgment', which is used to see if two are
-;;;; equivalent. The point of this is to maintain syntax in the form
-;;;; that the user wrote it, but it will require a more complicated
-;;;; equality process later. It might be better to internally treat
-;;;; the others as abbreviations, then display them as simply as
-;;;; possible.
 
-(define-type Judgment (U is-type =-type has-type =-in))
-
-(struct is-type
-  ([term : Term])
-  #:transparent)
-
-(struct =-type
-  ([type-1 : Term]
-   [type-2 : Term])
-  #:transparent)
-
-(struct has-type
-  ([term : Term]
-   [type : Term])
-  #:transparent)
-
-(struct =-in
-  ([left : Term]
-   [right : Term]
-   [in-type : Term])
-  #:transparent)
-
-(: simplify-judgment (-> Judgment Judgment))
-(define (simplify-judgment j)
-  (match j
-    [(is-type ty) (=-in ty ty 'Type)]
-    [(=-type t1 t2) (=-in t1 t2 'Type)]
-    [(has-type tm ty) (=-in tm tm ty)]
-    [(=-in tm1 tm2 ty) (=-in tm1 tm2 ty)]))
-
-(: judgment-equivalent? (-> (Listof Symbol)
-                            Judgment
-                            Judgment
-                            Boolean))
-(define (judgment-equivalent? hs j1 j2)
-  (match* ((simplify-judgment j1) (simplify-judgment j2))
-    [((=-in tm1 tm2 ty1) (=-in tm3 tm4 ty2))
-     (and (α-equiv? (zip hs hs) tm1 tm2))]
-    [(j1 j2) (error "Failed to simplify: ~a ~a" j1 j2)])) ;;todo
 
 
 ;;;; Refinement infrastructure
@@ -515,38 +502,68 @@
 
 (define-type Rule (-> ⊢ refinement))
 
-(define-syntax-rule (rule-match j (cases ...))
-  (match j (cases ... [other (cant-refine other)])))
+(define-syntax-rule (refinement-rule cases ...)
+  (lambda (j) (match j cases ... [other (cant-refine other)])))
+
+(define-syntax-rule (define-refinement-rule id cases ...)
+  (begin
+    (: id Rule)
+    (define id (refinement-rule cases ...))))
 
 
 ;;;; Temporary bogus rules until universe levels are instituted
 (: type-in-type Rule)
 (define (type-in-type j)
   (match j
-    [(⊢ context j)
-     #:when (judgment-equivalent? (map #{car @ Symbol Term} context)
-                                  j
-                                  (is-type 'Type))
+    [(⊢ Γ (is-type 'Type))
      refine-done-ax]
     [other (cant-refine other)]))
 
 
 ;;;; Structural rules
+
+;;; Refinement failure if hypothesis index out of bounds
+(: get-hypothesis (-> ⊢ Natural (List Symbol Term)))
+(define (get-hypothesis sequent which)
+  (let ((context (⊢-context sequent)))
+    (if (>= which (length context))
+        (cant-refine sequent)
+        (list-ref context which))))
+
+
+
 (: hypothesis (-> Natural Rule))
 (define (hypothesis which-hypothesis)
   (lambda (j)
-    (let ((ctxt (⊢-context j)))
-      (if (>= which-hypothesis (length ctxt))
-          (cant-refine j)
-          (match-let ((`(,x ,ty) (list-ref ctxt which-hypothesis)))
-            ;; conversion check for type in hypothesis
-            (if (judgment-equivalent? (map (inst car Symbol Term)
-                                           (drop ctxt
-                                                 which-hypothesis))
-                                      (has-type x ty)
-                                      (⊢-judgment j))
-                (refine-done x)
-                (cant-refine j)))))))
+    (match-let (((list x ty) (get-hypothesis j which-hypothesis)))
+      ;; conversion check for type in hypothesis
+      (if (α-equiv? (map (lambda ([h : (List Symbol Term)])
+                           (cons (car h) (car h)))
+                         (drop (⊢-context j)
+                               which-hypothesis))
+                    ty
+                    (⊢-goal j))
+          (refine-done x)
+          (cant-refine j)))))
+
+(: hypothesis-equality (-> Natural Rule))
+(define (hypothesis-equality which-hypothesis)
+  (lambda (j)
+    (match-let (((⊢ context (has-type x type)) j)
+                ((list h hypothesis-type)
+                 (get-hypothesis j which-hypothesis)))
+      (cond ((not (equal? x h)) (cant-refine j))
+            ((not (α-equiv? (map (lambda ([x : (List Symbol Term)])
+                                   (cons (car x) (car x)))
+                                 (drop (⊢-context j) which-hypothesis))
+                            type
+                            hypothesis-type))
+             (cant-refine j))
+            (else refine-done-ax)))))
+
+
+;;;; The Equality Type
+
 
 
 ;;;; This theory uses the empty list as the canonical unit value. This
