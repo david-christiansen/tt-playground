@@ -698,8 +698,8 @@
   [(⊢ _ (is-type 'Integer))
    (refine-done 'Integer)])
 
-(: integer-intro Rule)
-(define-refinement-rule integer-intro
+(: integer-constant-equality Rule)
+(define-refinement-rule integer-constant-equality
   [(⊢ _ (has-type i 'Integer))
    #:when (integer? i)
    (refine-done i)])
@@ -708,8 +708,8 @@
   [(⊢ _ (=-type 'Integer 'Integer))
    refine-done-ax])
 
-(: integer-aritmetic-op Rule)
-(define (integer-aritmetic-op j)
+(: integer-aritmetic-op-equality Rule)
+(define (integer-aritmetic-op-equality j)
   ;; These arithmetic operators don't necessarily need an argument
   (define arith-ops '(+ *))
   ;; These operators need at least one argument
@@ -897,21 +897,21 @@
 (module+ test
   (define proof-1
     (proof-step (⊢ empty (has-type '(+ 1 2 3) 'Integer))
-                integer-aritmetic-op
+                integer-aritmetic-op-equality
                 (list (proof-step (⊢ empty (has-type 1 'Integer))
-                                  integer-intro
+                                  integer-constant-equality
                                     empty)
                         (proof-step (⊢ empty (has-type 2 'Integer))
-                                    integer-intro
+                                    integer-constant-equality
                                     empty)
                         (proof-step (⊢ empty (has-type 3 'Integer))
-                                    integer-intro
+                                    integer-constant-equality
                                     empty))))
     (check-equal? (check-proof proof-1) (proof-done '(+ 1 2 3)))
 
     (define proof-2
       (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
-                  integer-aritmetic-op
+                  integer-aritmetic-op-equality
                   (list (proof-step (⊢ (list '(x Integer))
                                        (has-type 'x 'Integer))
                                     (hypothesis-equality 0)
