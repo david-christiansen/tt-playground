@@ -575,144 +575,144 @@
 
 
 ;;;; Function rules
-(: pi-f Rule)
-(define (pi-f j)
-  (match j
-    [(⊢ Γ (is-type term))
-     #:when (well-formed-pi? term)
-     (let ((args (pi-get-arguments term))
-           (body (pi-get-body term)))
-       (refinement
-        (append
-         ;; All the binder types are types
-         (map (λ ([bind : (List Symbol Term)])
-                (⊢ Γ (is-type (cadr bind))))
-              args)
-         ;; The body is a type
-         (list (⊢ (append (reverse args)
-                          Γ)
-                  (is-type body))))
-        (λ ([extracts : (Listof Term)])
-          `(Π ,((inst zip-with Symbol Term (List Symbol Term))
-                (lambda ([x : Symbol] [ty : Term]) (list x ty))
-                (map (inst car Symbol Term) args) extracts)
-              ,(last extracts)))))
-     ]
-    [other (cant-refine other)]))
-
-(: lambda-intro Rule)
-(define (lambda-intro j)
-  (match j
-    [(⊢ Γ (has-type term type))
-     #:when (and (well-formed-lambda? term)
-                 (well-formed-pi? type)
-                 (= (length (cadr term))
-                    (length (cadr type))))
+(define-refinement-rule pi-f
+  [(⊢ Γ (is-type term))
+   #:when (well-formed-pi? term)
+   (let ((args (pi-get-arguments term))
+         (body (pi-get-body term)))
      (refinement
-      (cons
-       (⊢ (append (reverse (for/list : Context
-                                     ([x : Symbol
-                                         (cadr term)]
-                                      [typed-binder : (List Symbol Term)
-                                                    (cadr type)])
-                             (list x (cadr typed-binder))))
-                  Γ)
-          (has-type (caddr term)
-                    (rename-free-variables
-                     (for/fold : (HashTable Symbol Symbol)
-                               ([rename (#{hash @ Symbol Symbol})])
-                               ([x : Symbol
-                                   (cadr term)]
-                                [typed-binder : (List Symbol Term)
-                                              (cadr type)])
-                       (hash-set rename x (car typed-binder)))
-                     (caddr type))))
-       (map (lambda ([typed-binder : (List Symbol Term)])
-              (⊢ Γ (is-type (cadr typed-binder))))
-            (cadr type)))
-      (lambda (extracts) `(λ ,(cadr term) ,(car extracts))))]
+      (append
+       ;; All the binder types are types
+       (map (λ ([bind : (List Symbol Term)])
+              (⊢ Γ (is-type (cadr bind))))
+            args)
+       ;; The body is a type
+       (list (⊢ (append (reverse args)
+                        Γ)
+                (is-type body))))
+      (λ ([extracts : (Listof Term)])
+        `(Π ,((inst zip-with Symbol Term (List Symbol Term))
+              (lambda ([x : Symbol] [ty : Term]) (list x ty))
+              (map (inst car Symbol Term) args) extracts)
+            ,(last extracts)))))])
+
+(: lambda-intro (-> (Listof Symbol) Rule))
+(define ((lambda-intro names) j)
+  (match j
+    [(⊢ Γ type)
+     #:when (well-formed-pi? type)
+     (let ((arguments (cadr type))
+           (body (caddr type)))
+       (if (not (= (length arguments) (length names)))
+           (cant-refine j)
+           (refinement
+            (cons
+             ;; The interesting new goal is to construct a body with
+             ;; the right type, under suitably-named assumptions
+             (⊢ (append
+                 (reverse
+                  (for/list : (Listof (List Symbol Term))
+                            ([new-name : Symbol
+                                       names]
+                             [typed-binder : (List Symbol Term)
+                                           arguments])
+                    (list new-name (cadr typed-binder))))
+                 Γ)
+                (rename-free-variables
+                 (for/fold : (HashTable Symbol Symbol)
+                           ([renames : (HashTable Symbol Symbol)
+                                     (hash)])
+                           ([new-name names]
+                            [typed-binder : (List Symbol Term)
+                                          arguments])
+                   (#{hash-set @ Symbol Symbol} renames
+                    (car typed-binder)
+                    new-name))
+                 body))
+             ;; The boring goals are to make sure that everything is
+             ;; still a type
+             (for/list : (Listof ⊢)
+                       ([typed-binder arguments])
+               (⊢ Γ (is-type (cadr typed-binder)))))
+            ;; The extracted term is the extract of the new goal,
+            ;; wrapped in the lambda
+            (lambda (extracts) `(λ ,names ,(car extracts))))))]
     [other (cant-refine other)]))
 
 (: pi-type-equality (-> (Listof Symbol) Rule))
-(define (pi-type-equality argument-names)
+(define ((pi-type-equality argument-names) j)
   ;; The empty rename set
   (: no-renames (HashTable Symbol Symbol))
   (define no-renames (hash))
 
-  (lambda (j)
-    (match j
-      [(⊢ Γ (=-type left right))
-       #:when (and (well-formed-pi? left) (well-formed-pi? right))
-       (let ((left-args (pi-get-arguments left))
-             (left-body (pi-get-body left))
-             (right-args (pi-get-arguments right))
-             (right-body (pi-get-body right)))
-         (if (= (length left-args) (length right-args))
-             (refine-ax
-              (append
-               ;; the pairwise argument types are equal types
-               (map (λ ([s : (List Symbol Term)]
-                        [t : (List Symbol Term)])
-                      (⊢ Γ (=-type (cadr s) (cadr t))))
-                    left-args
-                    right-args)
-               ;; the body types are equal in the extended context,
-               ;; using the names from the left type
-               (list (⊢ (append ((inst reverse (List Symbol Term))
-                                 (for/list ([x : Symbol
-                                               argument-names]
-                                            [arg : (List Symbol Term)
-                                                 left-args])
-                                   (list x (cadr arg))))
-                                Γ)
-                        (=-type
-                         (rename-free-variables
-                          (for/fold ([renames no-renames])
-                                    ([from : (List Symbol Term)
-                                           left-args]
-                                     [to : Symbol
-                                         argument-names])
-                            (hash-set renames (car from) to))
-                          left-body)
-                         (rename-free-variables
-                          (for/fold ([renames no-renames])
-                                    ([from : (List Symbol Term)
-                                           left-args]
-                                     [to : Symbol
-                                         argument-names])
-                            (hash-set renames (car from) to))
-                          right-body))))))
-             (cant-refine j)))]
-      [other (cant-refine other)])))
+  (match j
+    [(⊢ Γ (=-type left right))
+     #:when (and (well-formed-pi? left) (well-formed-pi? right))
+     (let ((left-args (pi-get-arguments left))
+           (left-body (pi-get-body left))
+           (right-args (pi-get-arguments right))
+           (right-body (pi-get-body right)))
+       (if (= (length left-args) (length right-args))
+           (refine-ax
+            (append
+             ;; the pairwise argument types are equal types
+             (map (λ ([s : (List Symbol Term)]
+                      [t : (List Symbol Term)])
+                    (⊢ Γ (=-type (cadr s) (cadr t))))
+                  left-args
+                  right-args)
+             ;; the body types are equal in the extended context,
+             ;; using the names from the left type
+             (list (⊢ (append ((inst reverse (List Symbol Term))
+                               (for/list ([x : Symbol
+                                             argument-names]
+                                          [arg : (List Symbol Term)
+                                               left-args])
+                                 (list x (cadr arg))))
+                              Γ)
+                      (=-type
+                       (rename-free-variables
+                        (for/fold ([renames no-renames])
+                                  ([from : (List Symbol Term)
+                                         left-args]
+                                   [to : Symbol
+                                       argument-names])
+                          (hash-set renames (car from) to))
+                        left-body)
+                       (rename-free-variables
+                        (for/fold ([renames no-renames])
+                                  ([from : (List Symbol Term)
+                                         left-args]
+                                   [to : Symbol
+                                       argument-names])
+                          (hash-set renames (car from) to))
+                        right-body))))))
+           (cant-refine j)))]
+    [other (cant-refine other)]))
 
 
 ;;;; Integer rules
 
 (: integer-formation Rule)
-(define (integer-formation j)
-  (match j
-    [(⊢ _ (is-type 'Integer))
-     (refine-done 'Integer)]
-    [other (cant-refine other)]))
+(define-refinement-rule integer-formation
+  [(⊢ _ (is-type 'Integer))
+   (refine-done 'Integer)])
 
 (: integer-intro Rule)
-(define (integer-intro j)
-  (match j
-    [(⊢ _ (has-type i 'Integer))
-     #:when (integer? i)
-     (refine-done i)]
-    [other (cant-refine other)]))
+(define-refinement-rule integer-intro
+  [(⊢ _ (has-type i 'Integer))
+   #:when (integer? i)
+   (refine-done i)])
 
-(: int-type-eq Rule)
-(define (int-type-eq j)
-  (match j
-    [(⊢ _ (=-type 'Integer 'Integer))
-     refine-done-ax]
-    [other (cant-refine other)]))
+(define-refinement-rule int-type-eq
+  [(⊢ _ (=-type 'Integer 'Integer))
+   refine-done-ax])
 
 (: integer-aritmetic-op Rule)
 (define (integer-aritmetic-op j)
+  ;; These arithmetic operators don't necessarily need an argument
   (define arith-ops '(+ *))
+  ;; These operators need at least one argument
   (define arith-ops-need-arg '(- /))
   (match j
     [(⊢ Γ (has-type (cons op args) 'Integer))
@@ -734,47 +734,39 @@
 
 ;;; An intersection is a type if all quantifiers are types and the
 ;;; body is a type given the extended context
-(: intersection-formation Rule)
-(define (intersection-formation j)
-  (match j
-    [(⊢ Γ (is-type term))
-     #:when (well-formed-intersection? term)
-     (let ((arguments (intersection-get-arguments term))
-           (body (intersection-get-body term)))
-       (refinement
-        (append
-         ;; First the quantified types need to actually be types
-         (map (λ ([argument-binder : (List Symbol Term)])
-                (⊢ Γ (is-type (cadr argument-binder))))
-              arguments)
+(define-refinement-rule intersection-formation
+  [(⊢ Γ (is-type term))
+   #:when (well-formed-intersection? term)
+   (let ((arguments (intersection-get-arguments term))
+         (body (intersection-get-body term)))
+     (refinement
+      (append
+       ;; First the quantified types need to actually be types
+       (map (λ ([argument-binder : (List Symbol Term)])
+              (⊢ Γ (is-type (cadr argument-binder))))
+            arguments)
 
-         ;; Also, the body needs to be a type given the bindings
-         (list (⊢ (append (reverse arguments) Γ)
-                  (is-type body))))
-        (λ (extracts) `(⋂ ,arguments ,(last extracts)))
-        ))]
-    [other (cant-refine other)]))
+       ;; Also, the body needs to be a type given the bindings
+       (list (⊢ (append (reverse arguments) Γ)
+                (is-type body))))
+      (λ (extracts) `(⋂ ,arguments ,(last extracts)))))])
 
 ;;; A term is an element of an intersection if it is a member of the
 ;;; body for any instantiation of the arguments.
-(: intersection-membership Rule)
-(define (intersection-membership j)
-  (match j
-    [(⊢ Γ (has-type term type))
-     #:when (well-formed-intersection? type)
-     (let ((⋂-arguments (intersection-get-arguments type))
-           (⋂-body (intersection-get-body type)))
-       (refinement
-        ;; The term has the body type under the intersection
-        ;; assumptions and the intersection assumptions are types
-        (cons (⊢ (append (reverse ⋂-arguments) Γ)
-                 (has-type term ⋂-body))
-              (map (lambda ([binding : (List Symbol Term)])
-                     (⊢ Γ (is-type (cadr binding))))
-                   ⋂-arguments))
+(define-refinement-rule intersection-membership
+  [(⊢ Γ type)
+   #:when (well-formed-intersection? type)
+   (let ((⋂-arguments (intersection-get-arguments type))
+         (⋂-body (intersection-get-body type)))
+     (refinement
+      (cons (⊢ (append (reverse ⋂-arguments) Γ)
+               ⋂-body)
+            (map (lambda ([binding : (List Symbol Term)])
+                   (⊢ Γ (is-type (cadr binding))))
+                 ⋂-arguments))
         ;; The extract is the term itself
-        car))]
-    [other (cant-refine other)]))
+        car))])
+
 
 ;;; Intersections in the context can be instantiated freely with
 ;;; well-typed values for the arguments.
@@ -804,16 +796,17 @@
                         arguments)
               ;; The original goal is provable
               (list
-               (let ((new-type (for/fold : Term
-                                         ([result : Term
-                                                  body])
-                                         ([argument : (List Symbol Term)
-                                                    arguments]
-                                          [new-term : Term
-                                                    instantiations])
-                                 (substitute new-term
-                                             (car argument)
-                                             result))))
+               (let ((new-type
+                      (for/fold : Term
+                                ([result : Term
+                                         body])
+                                ([argument : (List Symbol Term)
+                                           arguments]
+                                 [new-term : Term
+                                           instantiations])
+                        (substitute new-term
+                                    (car argument)
+                                    result))))
                  (⊢ (append Δ
                             (list
                              (list equality-hypothesis
@@ -921,7 +914,7 @@
                   integer-aritmetic-op
                   (list (proof-step (⊢ (list '(x Integer))
                                        (has-type 'x 'Integer))
-                                    (hypothesis 0)
+                                    (hypothesis-equality 0)
                                     empty)
                         (proof-goal (⊢ (list '(x Integer))
                                        (has-type 1 'Integer))))))
@@ -950,24 +943,23 @@
 
     (define proof-4
       (proof-step (⊢ empty
-                     (has-type '(λ (x) x)
-                               '(⋂ ((t Type))
-                                   (Π ((y t))
-                                      t))))
+                     '(⋂ ((t Type))
+                         (Π ((y t))
+                            t)))
                   intersection-membership
                   (list
                    (proof-step (⊢ '((t Type))
-                                  (has-type '(λ (x) x) '(Π ((y t)) t)))
-                               lambda-intro
+                                  '(Π ((y t)) t))
+                               (lambda-intro '(x))
                                (list (proof-step
                                       (⊢ '((x t) (t Type))
-                                         (has-type 'x 't))
+                                         't)
                                       (hypothesis 0)
                                       empty)
                                      (proof-step
                                       (⊢ '((t Type))
                                          (is-type 't))
-                                      (hypothesis 0)
+                                      (hypothesis-equality 0)
                                       empty)))
                    (proof-step (⊢ '() (is-type 'Type))
                                type-in-type
