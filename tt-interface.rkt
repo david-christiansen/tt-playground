@@ -3,6 +3,29 @@
 (require racket/gui/base)
 (require "tt.rkt")
 
+(define proof-goal-view%
+  (class object%
+    (init goal parent)
+    (super-new)
+    (define Γ (⊢-context goal))
+    (define T (⊢-goal goal))
+
+    (define (display-context context)
+      (if (null? context)
+          "·"
+          (string-join (map (lambda (element)
+                              (format "~a:~a"
+                                      (car element)
+                                      (cadr element)))
+                            (reverse context))
+                       ", ")))
+
+    (define widget
+      (new message%
+           [parent parent]
+           [label (format "~a ⊢ ~a" (display-context Γ) T)]))
+    ))
+
 (define proof-goal-panel%
   (class object%
     (init goal parent)
@@ -16,8 +39,8 @@
     (define inner-panel (new horizontal-panel%
                              [parent outer-panel]
                              [alignment '(left top)]))
-    (define goal-view (new message% [parent inner-panel]
-                           [label (format "~a" goal)]))
+    (define goal-view (new proof-goal-view% [parent inner-panel]
+                           [goal goal]))
     (define tactic-entry (new text-field% [parent inner-panel]
                               [label "Rule"]))
 
@@ -64,3 +87,5 @@
 
   (define initial-goal (new proof-goal-panel% [parent frame] [goal thm]))
   (send frame show #t))
+
+
