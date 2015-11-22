@@ -866,9 +866,9 @@
    (namespace-anchor->namespace tt)))
 
 (define-type Proof-Step (U proof-goal proof-step))
-(struct proof-goal ([goal : ⊢]) #:transparent)
+(struct proof-goal ([goal : Sequent]) #:transparent)
 (struct proof-step
-  ([goal : ⊢]
+  ([goal : Sequent]
    [by : Any] ;; code that should eval to a Rule
    [subgoals : (Listof Proof-Step)])
   #:transparent #:mutable)
