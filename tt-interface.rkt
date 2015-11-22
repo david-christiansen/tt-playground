@@ -1,6 +1,8 @@
 #lang racket
 (require racket/class)
 (require racket/gui/base)
+
+(require "tt-macros.rkt")
 (require "tt.rkt")
 
 (define proof-goal-view%

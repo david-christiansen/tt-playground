@@ -7,6 +7,7 @@
 (provide (all-defined-out))
 
 (require racket/set)
+(require "tt-macros.rkt")
 
 (module+ test (require typed/rackunit))
 
@@ -408,47 +409,6 @@
   (check-equal? (substitute 'y 'x '(⋂ ((y Integer)) x))
                 '(⋂ ((y1 Integer)) y)))
 
-
-;;;; Abbreviations for the full equality type
-(define-match-expander is-type
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ term)
-       #'(list '=-in term term 'Type)]))
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ term)
-       #'(list '=-in term term 'Type)])))
-
-(define-match-expander has-type
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ term type)
-       #'(list '=-in term term type)]))
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ term type)
-       #'(list '=-in term term type)])))
-
-(define-match-expander =-type
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ left right)
-       #'(list '=-in left right 'Type)]))
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ left right)
-       #'(list '=-in left right 'Type)])))
-
-(define-match-expander =-in
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ left right type)
-       #'(list '=-in left right type)]))
-  (lambda (stx)
-    (syntax-case stx ()
-      [(_ left right type)
-       #'(list '=-in left right type)])))
 
 ;;;; Pattern synonym for the is-value type
 
