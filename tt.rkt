@@ -437,6 +437,9 @@
    [goal : Term])
   #:transparent)
 
+;;; Readable name for sequents
+(define-type Sequent ⊢)
+
 (: split-context (-> Context
                      Natural
                      (List Context
@@ -854,15 +857,30 @@
 
 ;;;; Infrastructure for proofs
 
+(define-namespace-anchor tt)
+
+(: eval-rule (-> Any Rule))
+(define (eval-rule code)
+  ((cast eval (-> Any Namespace Rule))
+   code
+   (namespace-anchor->namespace tt)))
+
 (define-type Proof-Step (U proof-goal proof-step))
 (struct proof-goal ([goal : ⊢]) #:transparent)
 (struct proof-step
   ([goal : ⊢]
-   [by : Rule]
+   [by : Any] ;; code that should eval to a Rule
    [subgoals : (Listof Proof-Step)])
-  #:transparent)
+  #:transparent #:mutable)
 
-(: proof-statement (-> Proof-Step ⊢))
+(: refine-proof-goal (-> proof-goal Rule proof-step))
+(define (refine-proof-goal goal rule)
+  (match-let* ((goal-statement (proof-goal-goal goal))
+               ((refinement subgoals extractor)
+                ((eval-rule rule) goal-statement)))
+    (proof-step goal-statement rule (map proof-goal subgoals))))
+
+(: proof-statement (-> Proof-Step Sequent))
 (define (proof-statement step)
   (match step
     [(proof-goal g) g]
@@ -902,7 +920,8 @@
      (proof-incomplete (list goal))]
     [(proof-step goal rule subproofs)
      ;; First try to refine. If fail, fail.
-     (match-let (((refinement subgoals extract) (rule goal)))
+     (match-let (((refinement subgoals extract)
+                  ((eval-rule rule) goal)))
        ;; Check that there's the right number of subtrees.
        (if (not (= (length subgoals) (length subproofs)))
            (error "Mismatched goal count")
@@ -921,24 +940,24 @@
 (module+ test
   (define proof-1
     (proof-step (⊢ empty (has-type '(+ 1 2 3) 'Integer))
-                integer-arithmetic-op-equality
+                'integer-arithmetic-op-equality
                 (list (proof-step (⊢ empty (has-type 1 'Integer))
-                                  integer-constant-equality
-                                    empty)
-                        (proof-step (⊢ empty (has-type 2 'Integer))
-                                    integer-constant-equality
-                                    empty)
-                        (proof-step (⊢ empty (has-type 3 'Integer))
-                                    integer-constant-equality
-                                    empty))))
+                                  'integer-constant-equality
+                                  empty)
+                      (proof-step (⊢ empty (has-type 2 'Integer))
+                                  'integer-constant-equality
+                                  empty)
+                      (proof-step (⊢ empty (has-type 3 'Integer))
+                                  'integer-constant-equality
+                                  empty))))
     (check-equal? (check-proof proof-1) (proof-done '(+ 1 2 3)))
 
     (define proof-2
       (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
-                  integer-arithmetic-op-equality
+                  'integer-arithmetic-op-equality
                   (list (proof-step (⊢ (list '(x Integer))
                                        (has-type 'x 'Integer))
-                                    (hypothesis-equality 0)
+                                    '(hypothesis-equality 0)
                                     empty)
                         (proof-goal (⊢ (list '(x Integer))
                                        (has-type 1 'Integer))))))
@@ -949,16 +968,16 @@
       (proof-step (⊢ empty
                      (=-type '(Π ([x Integer] [y Integer]) Integer)
                              '(Π ([y Integer] [x Integer]) Integer)))
-                  (pi-type-equality '(n m))
+                  '(pi-type-equality '(n m))
                   (list (proof-step (⊢ empty
                                        (=-type 'Integer 'Integer))
-                                    int-type-eq
+                                    'int-type-eq
                                     empty)
                         (proof-goal (⊢ empty
                                        (=-type 'Integer 'Integer)))
                         (proof-step (⊢ '([m Integer] [n Integer])
                                        (=-type 'Integer 'Integer))
-                                    int-type-eq
+                                    'int-type-eq
                                     empty))))
 
     (check-equal? (check-proof proof-3)
@@ -970,25 +989,24 @@
                      '(⋂ ((t Type))
                          (Π ((y t))
                             t)))
-                  intersection-membership
+                  'intersection-membership
                   (list
                    (proof-step (⊢ '((t Type))
                                   '(Π ((y t)) t))
-                               (lambda-intro '(x))
+                               '(lambda-intro '(x))
                                (list (proof-step
                                       (⊢ '((x t) (t Type))
                                          't)
-                                      (hypothesis 0)
+                                      '(hypothesis 0)
                                       empty)
                                      (proof-step
                                       (⊢ '((t Type))
                                          (is-type 't))
-                                      (hypothesis-equality 0)
+                                      '(hypothesis-equality 0)
                                       empty)))
                    (proof-step (⊢ '() (is-type 'Type))
-                               type-in-type
-                               empty))
-                  ))
+                               'type-in-type
+                               empty))))
   (check-equal? (check-proof proof-4)
                 (proof-done '(λ (x) x))))
 
