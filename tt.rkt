@@ -32,7 +32,10 @@
 
 ;;;; Terms are old-school Lisp terms for now
 (define-type Term
-  (U Symbol (Listof Term) Integer Null))
+  (U Symbol (Pairof Term Term) Integer Null))
+
+(define-type Well-Formed-Application (Listof Term))
+(define-predicate well-formed-application? Well-Formed-Application)
 
 (define-type Well-Formed-Lambda
   (List 'λ (Listof Symbol) Term))
@@ -104,13 +107,13 @@
                       (set-subtract (free-variables body)
                                     (list->set names))))
          (error "Malformed term"))]
-    [xs (cond ((list? xs)
-               (foldr combine
-                      no-vars
-                      (map free-variables xs)))
-              ((symbol? xs)
-               (set xs))
-              (#t no-vars))]))
+    [(? well-formed-application? xs)
+     (foldr combine
+            no-vars
+            (map free-variables xs))]
+    [(? symbol? x) (set x)]
+    [(? integer?) no-vars]
+    [other (error "Malformed term" other)]))
 
 (module+ test
   (check-equal? (free-variables '(λ (x) (+ x y))) (set 'y '+))
@@ -159,7 +162,8 @@
          #f)]
 
     [(app1 app2)
-     #:when (and (list? app1) (list? app2))
+     #:when (and (well-formed-application? app1)
+                 (well-formed-application? app2))
      ;; todo: rule out lists starting with lambda/pi
      (for/and ((term1 app1)
                (term2 app2))
@@ -225,7 +229,7 @@
                                        body)))
          (error "Malformed term"))]
     [application
-     #:when (list? application)
+     #:when (well-formed-application? application)
      (map (λ ([subterm : Term])
             (rename-free-variables renames subterm))
           application)]
@@ -383,11 +387,15 @@
                         [(well-formed-intersection? in-term)
                          (substitute-typed-binder
                           '⋂ new-term name in-term)]
-                        [#t (error "Malformed term" in-term)])]
-                 [#t (map (lambda ([subterm : Term])
-                            (substitute new-term name subterm))
-                          in-term)]))]
-        [#t (error "Malformed term" in-term)]))
+                        [#t (error "Malformed term: bad binder"
+                                   in-term)])]
+                 [(well-formed-application? in-term)
+                  (map (lambda ([subterm : Term])
+                         (substitute new-term name subterm))
+                       in-term)]
+                 [else (error "Malformed term: not a list"
+                              in-term)]))]
+        [#t (error "Malformed term ~a" in-term)]))
 
 (module+ test
   (check-equal? (substitute 42 'x '(+ x 12)) '(+ 42 12))
