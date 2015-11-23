@@ -18,20 +18,29 @@
                                       (cadr element)))
                             (reverse context))
                        ", ")))
+    (format "~a ⊢ ~a" (display-context Γ) T)))
+
+
+(define proof-goal-view%
+  (class object%
+    (init goal parent)
+    (super-new)
+
     (define widget
       (new message%
            [parent parent]
            [stretchable-height #f]
            [stretchable-width #f]
-           [label (format "~a ⊢ ~a" (display-context Γ) T)]))))
+           [label (print-sequent goal)]))))
+
 
 (define proof-goal-editor-panel%
   (class vertical-panel%
 
-    (init goal parent)
+    (init-field parent goal proof-parent)
 
     (field (extractor #f)
-           (status 'unrefined)) ;; can be unrefined, refined, error, complete
+           (status 'unrefined)) ;; can be unrefined, refined, error
 
     (super-new [parent parent] [alignment '(left top)] [stretchable-height #f])
 
@@ -39,8 +48,7 @@
       (match status
         ['unrefined "—"]
         ['refined "➘"]
-        ['error "✘"]
-        ['complete "✔"]))
+        ['error "✘"]))
 
 
     (define inner-pane (new horizontal-panel%
@@ -51,12 +59,22 @@
                              [label (status-indicator)]))
     (define goal-view (new proof-goal-view% [parent inner-pane]
                            [goal goal]))
-    
 
     (define child-widget #f)
 
-    (define (update-status-view)
-      (send status-view set-label (status-indicator)))
+    (define/public (complete?)
+      (and (equal? status 'refined)
+           (for/and ([child-editor
+                      (if (is-a? child-widget subgoals-panel%)
+                          (send child-widget get-subgoal-editors)
+                          empty)])
+             (send child-editor complete?))))
+
+    (define/public (update-status-view)
+      (when proof-parent
+        (send proof-parent update-status-view))
+      (send status-view set-label
+            (if (complete?) "✔" (status-indicator))))
 
     (define (delete-child-widget)
       (when child-widget
@@ -88,7 +106,7 @@
                (subgoals (refinement-new-goals refine))
                (extract (refinement-extract refine)))
          (set-field! extractor this extract)
-         (set-field! status this (if (null? subgoals) 'complete 'refined))
+         (set-field! status this 'refined)
          (send tactic-entry enable #f)
          (send undo-refine-button enable #t)
          (send refine-button enable #f)
@@ -133,10 +151,6 @@
       (match (get-field status this)
         [(or 'unrefined 'error)
          (proof-goal goal)]
-        ['complete
-         (proof-step goal
-                     (read-current-input)
-                     empty)]
         ['refined
          (proof-step goal
                      (read-current-input)
@@ -144,6 +158,7 @@
                          (send child-widget subgoal-proof-steps)
                          empty))]))
     (public get-proof-step)))
+
 
 (define subgoals-panel%
   (class horizontal-panel%
@@ -164,7 +179,9 @@
       (for/list ([goal subgoals])
        (new proof-goal-editor-panel%
             [parent inner-panel]
+            [proof-parent parent]
             [goal goal])))
+    (define/public (get-subgoal-editors) subgoal-editors)
 
     (define (subgoal-proof-steps)
       (for/list ([goal-editor subgoal-editors])
