@@ -6,13 +6,9 @@
 (require "tt.rkt")
 
 ;;; A widget to display a single proof goal, formatted nicely
-(define proof-goal-view%
-  (class object%
-    (init goal parent)
-    (super-new)
-    (define Γ (⊢-context goal))
-    (define T (⊢-goal goal))
-
+(define (print-sequent sequent)
+  (let ((Γ (⊢-context sequent))
+        (T (⊢-goal sequent)))
     (define (display-context context)
       (if (null? context)
           "·"
@@ -82,20 +78,22 @@
             [style '(multiple)]
             [enabled #f])))
 
+    (define (read-current-input)
+      (read (open-input-string (send tactic-entry get-value))))
+
     (define (refine button event)
       (with-handlers ([exn:fail? show-error])
-        (let* ((input (send tactic-entry get-value))
-              (parsed (read (open-input-string input)))
-              (refine (eval `(,parsed ,goal)))
-              (subgoals (refinement-new-goals refine))
-              (extract (refinement-extract refine)))
+        (let* ((parsed (read-current-input))
+               (refine (eval `(,parsed ,goal)))
+               (subgoals (refinement-new-goals refine))
+               (extract (refinement-extract refine)))
          (set-field! extractor this extract)
          (set-field! status this (if (null? subgoals) 'complete 'refined))
          (send tactic-entry enable #f)
          (send undo-refine-button enable #t)
          (send refine-button enable #f)
          (replace-child-widget
-          (new proof-step-panel%
+          (new subgoals-panel%
                [parent this]
                [subgoals subgoals]))
          (update-status-view))))
@@ -129,15 +127,30 @@
            [parent inner-pane]
            [label "Undo"]
            [callback undo-refine]
-           [enabled #f]))))
+           [enabled #f]))
 
-(define proof-step-panel%
+    (define (get-proof-step)
+      (match (get-field status this)
+        [(or 'unrefined 'error)
+         (proof-goal goal)]
+        ['complete
+         (proof-step goal
+                     (read-current-input)
+                     empty)]
+        ['refined
+         (proof-step goal
+                     (read-current-input)
+                     (if (is-a? child-widget subgoals-panel%)
+                         (send child-widget subgoal-proof-steps)
+                         empty))]))
+    (public get-proof-step)))
+
+(define subgoals-panel%
   (class horizontal-panel%
     (init subgoals parent)
     (super-new [parent parent]
                [alignment '(left top)]
                [stretchable-height #f])
-
 
     (define spacer (new panel%
                         [parent this]
@@ -146,26 +159,95 @@
     (define inner-panel (new vertical-panel%
                             [parent this]
                             [alignment '(left top)]))
-    (for ([goal subgoals])
-      (new proof-goal-editor-panel%
-           [parent inner-panel]
-           [goal goal]))))
+
+    (define subgoal-editors
+      (for/list ([goal subgoals])
+       (new proof-goal-editor-panel%
+            [parent inner-panel]
+            [goal goal])))
+
+    (define (subgoal-proof-steps)
+      (for/list ([goal-editor subgoal-editors])
+        (send goal-editor get-proof-step)))
+    (public subgoal-proof-steps)))
+
+
+(define (export-proof proof)
+  (define frame (new frame%
+                     [label "Proof"]
+                     [width 600]
+                     [height 600]
+                     [alignment '(left top)]))
+
+  (define proof-text
+    (let ((port (open-output-string)))
+      (pretty-write proof port)
+      (get-output-string port)))
+
+  (new text-field%
+       [parent frame]
+       [style '(multiple)]
+       [label #f]
+       [init-value proof-text])
+  (send frame show #t))
+
+
+(define (extract proof)
+  (let ((port (open-output-string)))
+    (with-handlers ([exn:fail?
+                     (lambda (exn)
+                       (displayln "An error occurred while checking the proof:" port)
+                       (displayln exn port))])
+      (match (check-proof proof)
+        [(proof-done extracted)
+         (displayln "Proof complete. Extracted term:" port)
+         (pretty-write extracted port)]
+        [(proof-incomplete remaining)
+         (displayln "Proof incomplete. Unsolved goals:" port)
+         (for ([goal remaining])
+           (display " * " port)
+           (displayln (print-sequent goal) port))]))
+    (define frame (new frame%
+                       [label "Proof"]
+                       [width 600]
+                       [height 600]
+                       [alignment '(left top)]))
+    (new text-field%
+       [parent frame]
+       [style '(multiple)]
+       [label #f]
+       [init-value (get-output-string port)])
+    (send frame show #t)))
 
 
 (define (prove thm)
-  (define goals (list thm))
-
   (define frame (new frame%
-                     [label "TT Interactions"]
+                     [label "Proof Editor"]
                      [width 800]
                      [height 600]
                      [alignment '(left top)]))
 
   (define mb (new menu-bar% [parent frame]))
+
+  (define m-file (new menu% [label "Proof"] [parent mb]))
+
   (define m-edit (new menu% [label "Edit"] [parent mb]))
   (append-editor-operation-menu-items m-edit #f)
 
-  (define initial-goal (new proof-goal-editor-panel% [parent frame] [goal thm]))
+  (define initial-goal (new proof-goal-editor-panel%
+                            [parent frame]
+                            [goal thm]
+                            [proof-parent #f]))
+
+  (new menu-item%
+       [label "Export"]
+       [parent m-file]
+       [callback (lambda (x y) (export-proof (send initial-goal get-proof-step)))])
+  (new menu-item%
+       [label "Extract"]
+       [parent m-file]
+       [callback (lambda (x y) (extract (send initial-goal get-proof-step)))])
+
  
   (send frame show #t))
 
