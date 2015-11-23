@@ -894,11 +894,11 @@
 
 (define-type Proof-Status (U proof-done proof-incomplete))
 (struct proof-done ([extract : Term]) #:transparent)
-(struct proof-incomplete ([remaining : (Listof ⊢)]) #:transparent)
+(struct proof-incomplete ([remaining : (Listof Sequent)]) #:transparent)
 
 (: all-complete (-> (Listof Proof-Status)
                     (U (Pairof #t (Listof Term))
-                       (Pairof #f (Listof ⊢)))))
+                       (Pairof #f (Listof Sequent)))))
 (define (all-complete results)
   (match results
     ['() (list #t)]
