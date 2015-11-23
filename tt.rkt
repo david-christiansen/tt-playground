@@ -608,6 +608,39 @@
 
 
 
+;;;; List rules
+(define-refinement-rule list-formation
+  [(⊢ Γ 'Type)
+   (refinement (list (⊢ Γ 'Type)) (lambda (t) `(Listof ,t)))])
+
+(define-refinement-rule list-equality
+  [(⊢ Γ (=-type (list 'Listof left) (list 'Listof right)))
+   (refine-ax (list (⊢ Γ (=-type left right))))])
+
+(define-refinement-rule nil-equality
+  [(⊢ Γ (=-in empty empty (list 'Listof type)))
+   (refine-ax (list (⊢ Γ (is-type type))))])
+
+(define-refinement-rule cons-equality
+  [(⊢ Γ (=-in (list 'cons x xs)
+              (list 'cons y ys)
+              (list 'Listof type)))
+   (refine-ax (list (⊢ Γ (=-in x y type))
+                    (⊢ Γ (=-in xs ys `(Listof ,type)))))])
+
+(define-refinement-rule nil-formation
+  [(⊢ Γ (list 'Listof type))
+   (refinement (list (⊢ Γ (is-type type)))
+               (lambda (_) 'empty))])
+
+(define-refinement-rule cons-formation
+  [(⊢ Γ (list 'Listof type))
+   (refinement (list (⊢ Γ type)
+                     (⊢ Γ `(Listof ,type)))
+               (lambda (extracts)
+                 `(cons ,(car extracts) ,(cadr extracts))))])
+
+
 ;;;; Function rules
 (define-refinement-rule pi-f
   [(⊢ Γ (is-type term))
