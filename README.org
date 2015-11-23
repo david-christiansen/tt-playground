@@ -4,3 +4,29 @@ This is a place for experimental implementations of type theories that
 may well be busted, as well as a place for me to learn Racket.
 
 No guarantees about any of it!
+
+** A Refiner for a CTT Dialect
+
+[[file:tt.rkt][tt.rkt]] and [[file:tt-interface.rkt][tt-interface.rkt]] contain a simple refiner and proof editor
+for a vaguely Nuprl-inspired theory. To try it out, load up
+=tt-interface.rkt= in Racket and evaluate the following at the REPL:
+
+#+BEGIN_SRC racket
+(prove (⊢ empty
+          '(⋂ ((t Type))
+              (Π ((y t))
+                 t))))
+#+END_SRC
+
+You'll get a little proof editor. In the resulting text field, type
+=intersection-membership= and click the Refine button. You'll get two
+new goals.
+
+In the first of these subgoals, type =(lambda-intro '(x))= and
+refine. This will give two goals: solve them with =(hypothesis 0)= and
+=(hypothesis-equality 0)= respectively.
+
+Solve the last goal with =type-in-type= (sorry).
+
+In the Proof menu at the top of the window, use Export to get a
+checkable proof artifact and Extract to get a runnable program.
