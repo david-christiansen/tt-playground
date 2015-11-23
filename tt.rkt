@@ -742,30 +742,54 @@
    #:when (integer? i)
    (refine-done i)])
 
-(define-refinement-rule int-type-eq
+(define-refinement-rule integer-type-equality
   [(⊢ _ (=-type 'Integer 'Integer))
    refine-done-ax])
 
+;; These arithmetic operators don't necessarily need an argument
+(define arith-ops '(+ *))
+;; These operators need at least one argument
+(define arith-ops-need-arg '(- /))
+
+
+(: integer-arithmetic-op-formation (-> Symbol Natural Rule))
+(define (integer-arithmetic-op-formation op argument-count)
+  (refinement-rule
+   [(⊢ Γ 'Integer)
+    #:when (or (member op arith-ops)
+               (and (member op arith-ops-need-arg)
+                    (> argument-count 0)))
+    (refinement (for/list ([i (in-range 0 argument-count)])
+                  (⊢ Γ 'Integer))
+                (lambda (extracted)
+                  (cons op extracted)))]))
+
 (: integer-arithmetic-op-equality Rule)
-(define (integer-arithmetic-op-equality j)
-  ;; These arithmetic operators don't necessarily need an argument
-  (define arith-ops '(+ *))
-  ;; These operators need at least one argument
-  (define arith-ops-need-arg '(- /))
-  (match j
-    [(⊢ Γ (has-type (cons op args) 'Integer))
-     #:when (member op arith-ops)
-     (refinement (map (λ ([arg : Term]) (⊢ Γ (has-type arg 'Integer)))
-                      args)
-                 (λ ([exts : (Listof Term)])
-                   (cons op exts)))]
-    [(⊢ Γ (has-type (cons op (cons arg1 args)) 'Integer))
-     #:when (member op arith-ops-need-arg)
-     (refinement (map (λ ([arg : Term]) (⊢ Γ (has-type arg 'Integer)))
-                      (cons arg1 args))
-                 (λ ([exts : (Listof Term)])
-                   (cons op exts)))]
-    [other (cant-refine other)]))
+(define-refinement-rule integer-arithmetic-op-equality
+  [(⊢ Γ (=-in (cons op1 args1)
+              (cons op2 args2)
+              'Integer))
+   #:when (and (member op1 arith-ops)
+               (equal? op1 op2)
+               (well-formed-application? args1)
+               (well-formed-application? args2)
+               (= (length args1) (length args2)))
+   (refine-ax (for/list : (Listof Sequent)
+                        ([arg1 args1] [arg2 args2])
+                (⊢ Γ (=-in arg1 arg2 'Integer))))]
+  [(⊢ Γ (=-in (cons op1 args1)
+              (cons op2 args2)
+              'Integer))
+   #:when (and (member op1 arith-ops-need-arg)
+               (equal? op1 op2)
+               (well-formed-application? args1)
+               (pair? args1)
+               (well-formed-application? args2)
+               (pair? args2)
+               (= (length args1) (length args2)))
+   (refine-ax (for/list : (Listof Sequent)
+                        ([arg1 args1] [arg2 args2])
+                (⊢ Γ (=-in arg1 arg2 'Integer))))])
 
 
 ;;;; Rules for intersections
@@ -961,7 +985,7 @@
                       (proof-step (⊢ empty (has-type 3 'Integer))
                                   'integer-constant-equality
                                   empty))))
-    (check-equal? (check-proof proof-1) (proof-done '(+ 1 2 3)))
+    (check-equal? (check-proof proof-1) (proof-done '()))
 
     (define proof-2
       (proof-step (⊢ (list '(x Integer)) (has-type '(+ x 1) 'Integer))
@@ -982,13 +1006,13 @@
                   '(pi-type-equality '(n m))
                   (list (proof-step (⊢ empty
                                        (=-type 'Integer 'Integer))
-                                    'int-type-eq
+                                    'integer-type-equality
                                     empty)
                         (proof-goal (⊢ empty
                                        (=-type 'Integer 'Integer)))
                         (proof-step (⊢ '([m Integer] [n Integer])
                                        (=-type 'Integer 'Integer))
-                                    'int-type-eq
+                                    'integer-type-equality
                                     empty))))
 
     (check-equal? (check-proof proof-3)
