@@ -124,8 +124,10 @@
               (binding-list? args2))
          (and (= (length args1) (length args2))
               (α-equiv? ((inst append (Pair Symbol Symbol))
-                         (for/list ([x args1] [y args2])
-                           (cons x y))
+                         (zip-with (lambda ([x : Symbol] [y : Symbol])
+                                     (cons x y))
+                                   args1
+                                   args2)
                          context)
                         body1
                         body2))
@@ -148,8 +150,9 @@
                           types1
                           types2))
                 (α-equiv? ((inst append (Pair Symbol Symbol))
-                           (for/list ([x names1] [y names2])
-                             (cons x y))
+                           (zip-with (inst cons Symbol Symbol)
+                                     names1
+                                     names2)
                            context)
                           body1
                           body2)))
