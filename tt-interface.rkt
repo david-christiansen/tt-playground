@@ -102,7 +102,7 @@
     (define (refine button event)
       (with-handlers ([exn:fail? show-error])
         (let* ((parsed (read-current-input))
-               (refine (eval `(,parsed ,goal)))
+               (refine ((eval-rule parsed) goal))
                (subgoals (refinement-new-goals refine))
                (extract (refinement-extract refine)))
          (set-field! extractor this extract)
