@@ -473,21 +473,21 @@
 
 ;;;; Refinement infrastructure
 
-(struct exn:fail:refinement exn ([cant-refine : ⊢])
+(struct exn:fail:refinement exn:fail ([cant-refine : Sequent])
   #:transparent)
 
-(: cant-refine (All (a) (-> ⊢ a)))
+(: cant-refine (All (a) (-> Sequent a)))
 (define (cant-refine j)
   (raise (exn:fail:refinement
           (format "Refinement failure: ~a" j)
           (current-continuation-marks) j)))
 
 (struct refinement
-  ([new-goals : (Listof ⊢)]
+  ([new-goals : (Listof Sequent)]
    [extract : (-> (Listof Term) Term)])
   #:transparent)
 
-(: refine-ax (-> (Listof ⊢) refinement))
+(: refine-ax (-> (Listof Sequent) refinement))
 (define (refine-ax subgoals) (refinement subgoals (λ (_) empty)))
 
 (: refine-done (-> Term refinement))
@@ -698,7 +698,7 @@
                  body))
              ;; The boring goals are to make sure that everything is
              ;; still a type
-             (for/list : (Listof ⊢)
+             (for/list : (Listof Sequent)
                        ([typed-binder arguments])
                (⊢ Γ (is-type (cadr typed-binder)))))
             ;; The extracted term is the extract of the new goal,
