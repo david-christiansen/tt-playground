@@ -32,4 +32,4 @@ In the Proof menu at the top of the window, use Export to get a
 checkable proof artifact and Extract to get a runnable program.
 
 
- #+STARTUP: showall
+#+STARTUP: showall
