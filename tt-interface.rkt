@@ -5,6 +5,8 @@
 (require "tt-macros.rkt")
 (require "tt.rkt")
 
+(provide (all-defined-out))
+
 ;;; A widget to display a single proof goal, formatted nicely
 (define (print-sequent sequent)
   (let ((Γ (⊢-context sequent))
