@@ -18,18 +18,21 @@ for a vaguely Nuprl-inspired theory. To try it out, load up
                  t))))
 #+END_SRC
 
-You'll get a little proof editor. In the resulting text field, type
+You'll get a little proof editor. In the top of the proof editor,
+there's a tree view that shows the overall structure of the
+proof. Click on the proof goal, and the bottom half of the proof
+editor will display its details. In the text field labeled "by", type
 =intersection-membership= and click the Refine button. You'll get two
 new goals.
 
 In the first of these subgoals, type =(lambda-intro '(x))= and
 refine. This will give two goals: solve them with =(hypothesis 0)= and
-=(hypothesis-equality 0)= respectively.
+=(hypothesis-equality 0)= respectively. As you solve these goals, the
+goal overview is updated to show the incrementally-constructed
+program.
 
-Solve the last goal with =type-in-type= (sorry).
-
-In the Proof menu at the top of the window, use Export to get a
-checkable proof artifact and Extract to get a runnable program.
+Solve the last goal with =type-in-type=. Proper universe polymorphism
+and perhaps typical ambiguity remain to be implemented.
 
 
 #+STARTUP: showall

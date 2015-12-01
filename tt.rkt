@@ -34,6 +34,8 @@
 (define-type Term
   (U Symbol (Pairof Term Term) Integer Null))
 
+(define-predicate term? Term)
+
 (define-type Well-Formed-Application (Listof Term))
 (define-predicate well-formed-application? Well-Formed-Application)
 
@@ -450,6 +452,8 @@
 
 ;;; Readable name for sequents
 (define-type Sequent ⊢)
+
+(define-predicate sequent? Sequent)
 
 (: split-context (-> Context
                      Natural
