@@ -1,4 +1,5 @@
 #lang racket/gui
+(require "terms.rkt")
 (require "tt.rkt")
 (require mrlib/hierlist)
 (require racket/exn)
