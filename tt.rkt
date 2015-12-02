@@ -194,6 +194,32 @@
              (cant-refine j))
             (else refine-done-ax)))))
 
+
+;;;; The empty type is called Absurd, to avoid confusion with the
+;;;; Racket notion of void.
+(define-refinement-rule absurd-formation
+  [(⊢ Γ Type)
+   (refine-done 'Absurd)])
+
+(define-refinement-rule absurd-equality
+  [(⊢ Γ (=-type 'Absurd 'Absurd))
+   refine-done-ax])
+
+(define-refinement-rule crash-equality
+  [(⊢ Γ (=-in (list 'error left) (list 'error right) type))
+   (refine-ax (list (⊢ Γ (=-in left right 'Absurd))))])
+
+(: ex-falso-quodlibet (-> Natural Rule))
+(define (ex-falso-quodlibet which-hypothesis)
+  (refinement-rule
+   [(⊢ context goal)
+    #:when (< which-hypothesis (length context))
+    ;; TODO: rewrite as view pattern
+    (match (split-context context which-hypothesis)
+      [(list Δ (list x 'Absurd) Γ)
+       (refine-done `(error ,x))]
+      [other (cant-refine (⊢ context goal))])]))
+
 
 
 ;;;; This theory uses the empty list as the canonical unit value. This
