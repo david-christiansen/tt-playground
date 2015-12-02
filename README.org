@@ -5,6 +5,11 @@ may well be busted, as well as a place for me to learn Racket.
 
 No guarantees about any of it!
 
+** Racket versions
+
+Presently, everything is tested on Racket 6.3. Older versions probably
+don't work.
+
 ** A Refiner for a CTT Dialect
 
 [[file:tt.rkt][tt.rkt]] and [[file:tt-interface.rkt][tt-interface.rkt]] contain a simple refiner and proof editor
