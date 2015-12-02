@@ -199,13 +199,29 @@
 
 (define/contract (goal->string proof-goal)
   (-> (is-a?/c proof-step%) string?)
+  (define (context->string Γ)
+    (string-join (for/list ([elt Γ])
+                   (format "~a:~a" (car elt) (cadr elt)))
+                 ", "))
   (format "~a ⊢ ~a : ~a"
-          (let ((Γ (reverse (get-field context proof-goal))))
-            (if (null? Γ)
-                "·"
-                (string-join (for/list ([elt Γ])
-                               (format "~a:~a" (car elt) (cadr elt)))
-                             ", ")))
+          (let* ((Γ (reverse (get-field context proof-goal)))
+                 (parent (get-field parent proof-goal))
+                 (parent-Γ (if parent
+                               (reverse (get-field context parent))
+                               #f))
+                 (display-Γ (if (and parent-Γ
+                                     (not (null? parent-Γ))
+                                     (list-prefix? parent-Γ Γ))
+                                (drop Γ (length parent-Γ))
+                                #f)))
+            (cond [(null? Γ)
+                   "·"]
+                  [(and display-Γ (not (null? display-Γ)))
+                   (string-append "…, "
+                         (context->string display-Γ))]
+                  [display-Γ "…"]
+                  [else
+                   (context->string Γ)]))
           (match (get-field status proof-goal)
             [(list 'incomplete) "?"]
             [(list 'refined _) "➘"]
