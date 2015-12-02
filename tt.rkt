@@ -194,6 +194,10 @@
              (cant-refine j))
             (else refine-done-ax)))))
 
+(define-refinement-rule axiom-equality
+  [(⊢ Γ (=-in ''() ''() (=-in left right type)))
+   (refine-ax (list (⊢ Γ (=-in left right type))))])
+
 
 ;;;; The empty type is called Absurd, to avoid confusion with the
 ;;;; Racket notion of void.
